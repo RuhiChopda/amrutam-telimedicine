@@ -1,0 +1,6 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata: { name: amrutam, labels: { release: prometheus } }
+spec:
+  selector: { matchExpressions: [{ key: app, operator: In, values: [amrutam-api, amrutam-worker] }] }
+  podMetricsEndpoints: [{ port: metrics, path: /metrics, interval: 15s }]

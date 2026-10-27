@@ -1,0 +1,2 @@
+env         = "prod"
+alert_email = "oncall@amrutam.example"

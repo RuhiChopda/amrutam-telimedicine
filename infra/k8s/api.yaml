@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: amrutam-api, labels: { app: amrutam-api } }
+spec:
+  replicas: 6
+  strategy: { type: RollingUpdate, rollingUpdate: { maxSurge: 25%, maxUnavailable: 0 } }
+  selector: { matchLabels: { app: amrutam-api } }
+  template:
+    metadata:
+      labels: { app: amrutam-api }
+      annotations: { prometheus.io/scrape: "true", prometheus.io/port: "9464" }
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 40
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
+      topologySpreadConstraints:
+        - { maxSkew: 1, topologyKey: topology.kubernetes.io/zone, whenUnsatisfiable: DoNotSchedule, labelSelector: { matchLabels: { app: amrutam-api } } }
+      containers:
+        - name: api
+          image: amrutam-backend
+          args: ["node", "dist/main.js"]
+          ports: [{ name: http, containerPort: 3000 }, { name: metrics, containerPort: 9464 }]
+          envFrom: [{ configMapRef: { name: amrutam-config } }, { secretRef: { name: amrutam-secrets } }]
+          env: [{ name: SERVICE_NAME, value: amrutam-api }]
+          resources: { requests: { cpu: 500m, memory: 512Mi }, limits: { memory: 768Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          startupProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 2, failureThreshold: 30 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 10, timeoutSeconds: 2 }
+          readinessProbe: { httpGet: { path: /readyz, port: http }, periodSeconds: 5, timeoutSeconds: 2, failureThreshold: 2 }
+          lifecycle: { preStop: { exec: { command: ["sleep", "8"] } } }   # let the LB deregister before SIGTERM drains
+---
+apiVersion: v1
+kind: Service
+metadata: { name: amrutam-api }
+spec: { selector: { app: amrutam-api }, ports: [{ name: http, port: 80, targetPort: http }] }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: amrutam-api }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: amrutam-api }
+  minReplicas: 6
+  maxReplicas: 40
+  metrics: [{ type: Resource, resource: { name: cpu, target: { type: Utilization, averageUtilization: 60 } } }]
+  behavior: { scaleDown: { stabilizationWindowSeconds: 300 } }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: amrutam-api }
+spec: { minAvailable: 4, selector: { matchLabels: { app: amrutam-api } } }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: amrutam-api
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS13-1-2-2021-06
+    alb.ingress.kubernetes.io/healthcheck-path: /readyz
+    alb.ingress.kubernetes.io/wafv2-acl-arn: REPLACE_WITH_WAF_ACL_ARN   # from terraform output waf_acl_arn
+spec:
+  ingressClassName: alb
+  rules: [{ host: api.amrutam.example, http: { paths: [{ path: /, pathType: Prefix, backend: { service: { name: amrutam-api, port: { name: http } } } }] } }]

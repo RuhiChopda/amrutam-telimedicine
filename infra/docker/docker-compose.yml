@@ -1,0 +1,80 @@
+# Full local stack: app + dependencies + observability.
+#   docker compose -f infra/docker/docker-compose.yml up --build
+# API :3000   Grafana :3001 (admin/admin)   Prometheus :9090   Jaeger :16686   Loki via Grafana Explore
+name: amrutam
+x-app-env: &app-env
+  NODE_ENV: development
+  DATABASE_URL: postgres://amrutam:amrutam@postgres:5432/amrutam
+  REDIS_URL: redis://redis:6379
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+  ENABLE_DEV_ENDPOINTS: "true"
+  JWT_PRIVATE_KEY_B64: ${JWT_PRIVATE_KEY_B64:?run `npm run gen:env > .env` and pass --env-file .env}
+  JWT_PUBLIC_KEY_B64: ${JWT_PUBLIC_KEY_B64:?}
+  DATA_KEYS_JSON: ${DATA_KEYS_JSON:?}
+  DATA_KEY_ACTIVE: ${DATA_KEY_ACTIVE:-k1}
+  BLIND_INDEX_KEY_B64: ${BLIND_INDEX_KEY_B64:?}
+  AUDIT_HMAC_KEY_B64: ${AUDIT_HMAC_KEY_B64:?}
+  SIGNING_KEY_B64: ${SIGNING_KEY_B64:?}
+  PAYMENT_WEBHOOK_SECRET: ${PAYMENT_WEBHOOK_SECRET:?}
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment: { POSTGRES_USER: amrutam, POSTGRES_PASSWORD: amrutam, POSTGRES_DB: amrutam }
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U amrutam"], interval: 5s, timeout: 3s, retries: 20 }
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports: ["6379:6379"]
+    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 5s, timeout: 3s, retries: 20 }
+  migrate:
+    build: { context: ../.., dockerfile: Dockerfile }
+    command: ["node", "dist/migrate-cli.js"]
+    environment: { DATABASE_URL: "postgres://amrutam:amrutam@postgres:5432/amrutam" }
+    depends_on: { postgres: { condition: service_healthy } }
+    restart: "no"
+  api:
+    build: { context: ../.., dockerfile: Dockerfile }
+    environment: { <<: *app-env, SERVICE_NAME: amrutam-api }
+    ports: ["3000:3000", "9464:9464"]
+    depends_on: { migrate: { condition: service_completed_successfully }, redis: { condition: service_healthy } }
+  worker:
+    build: { context: ../.., dockerfile: Dockerfile }
+    command: ["node", "dist/worker.js"]
+    environment: { <<: *app-env, SERVICE_NAME: amrutam-worker }
+    depends_on: { migrate: { condition: service_completed_successfully }, redis: { condition: service_healthy } }
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    volumes:
+      - ../observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../observability/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports: ["9090:9090"]
+  grafana:
+    image: grafana/grafana:11.3.0
+    environment: { GF_SECURITY_ADMIN_PASSWORD: admin, GF_AUTH_ANONYMOUS_ENABLED: "false" }
+    volumes:
+      - ../observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["3001:3000"]
+    depends_on: [prometheus, loki, jaeger]
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.114.0
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes: ["../observability/otel-collector.yaml:/etc/otel/config.yaml:ro"]
+    depends_on: [jaeger]
+  jaeger:
+    image: jaegertracing/all-in-one:1.64.0
+    environment: { COLLECTOR_OTLP_ENABLED: "true" }
+    ports: ["16686:16686"]
+  loki:
+    image: grafana/loki:3.2.1
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+  promtail:
+    image: grafana/promtail:3.2.1
+    command: ["-config.file=/etc/promtail/config.yml"]
+    volumes:
+      - ../observability/promtail.yml:/etc/promtail/config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on: [loki]
+volumes: { pgdata: {} }

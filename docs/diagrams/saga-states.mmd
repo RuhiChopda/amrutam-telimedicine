@@ -1,0 +1,18 @@
+stateDiagram-v2
+  [*] --> PENDING_PAYMENT: book (slot OPEN→HELD)
+  [*] --> CONFIRMED: book, fee = 0
+  PENDING_PAYMENT --> CONFIRMED: payment.succeeded (slot HELD→BOOKED)
+  PENDING_PAYMENT --> CANCELLED: payment.failed (slot→OPEN)
+  PENDING_PAYMENT --> CANCELLED: hold expired (slot→OPEN, void intent)
+  PENDING_PAYMENT --> CANCELLED: patient cancels (void intent)
+  CONFIRMED --> CANCELLED: cancel (refund per policy, slot reopened or closed)
+  CONFIRMED --> IN_PROGRESS: doctor starts (≥10 min before)
+  CONFIRMED --> NO_SHOW: grace period elapsed
+  IN_PROGRESS --> COMPLETED: doctor completes (notes encrypted)
+  CANCELLED --> [*]
+  COMPLETED --> [*]
+  NO_SHOW --> [*]
+  note right of CANCELLED
+    late payment.succeeded after CANCELLED
+    → payment REFUND_PENDING → REFUNDED
+  end note

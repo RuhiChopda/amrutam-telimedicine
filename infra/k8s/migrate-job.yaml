@@ -1,0 +1,19 @@
+# Runs before each rollout. Migrations are forward-only, advisory-locked and must be backwards compatible with the
+# previous app version (expand → deploy → contract) so rolling deploys and rollbacks are safe.
+apiVersion: batch/v1
+kind: Job
+metadata: { name: amrutam-migrate }
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: migrate
+          image: amrutam-backend
+          args: ["node", "dist/migrate-cli.js"]
+          envFrom: [{ secretRef: { name: amrutam-secrets } }]   # DATABASE_MIGRATION_URL (owner role) if present, else DATABASE_URL
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }

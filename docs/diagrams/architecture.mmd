@@ -1,0 +1,36 @@
+flowchart LR
+  subgraph Clients
+    P[Patient app]:::c
+    D[Doctor app]:::c
+    A[Admin / Auditor console]:::c
+    PSP[(Payment provider)]:::x
+  end
+  WAF[WAF + TLS 1.3<br/>ALB]:::e
+  subgraph EKS["Kubernetes (3 AZ)"]
+    API["API pods ×6..40<br/>Fastify · stateless<br/>auth, RBAC, validation,<br/>rate limit, idempotency"]:::s
+    WRK["Worker pods ×3+<br/>job queue + scheduler<br/>PSP calls, notifications,<br/>expiry, rollups, key rotation"]:::s
+  end
+  subgraph Data["Data tier (encrypted, KMS)"]
+    PGW[("Aurora PostgreSQL<br/>writer")]:::d
+    PGR[("Read replicas ×2")]:::d
+    RD[("Redis (multi-AZ)<br/>cache · revocation · rate limits")]:::d
+  end
+  OBS["Prometheus · Grafana · Loki · OTel → Jaeger"]:::o
+  S3[("S3 Object Lock<br/>audit archive + cross-region")]:::d
+  P & D & A --> WAF --> API
+  PSP -->|signed webhook| WAF
+  API -->|tx: state + outbox job + audit| PGW
+  API -.->|search / analytics reads| PGR
+  API <-.->|fail-open cache| RD
+  PGW -->|streaming replication| PGR
+  WRK -->|SKIP LOCKED claim| PGW
+  WRK -->|"create intent / void / refund<br/>timeout + retry + breaker"| PSP
+  WRK -->|notify| N[SES / SNS / FCM]:::x
+  PGW -.->|detach old audit partitions| S3
+  API & WRK -.->|"metrics, logs, traces"| OBS
+  classDef c fill:#eef,stroke:#88a
+  classDef e fill:#ffe,stroke:#aa6
+  classDef s fill:#efe,stroke:#6a6
+  classDef d fill:#fee,stroke:#a66
+  classDef o fill:#eff,stroke:#6aa
+  classDef x fill:#eee,stroke:#999

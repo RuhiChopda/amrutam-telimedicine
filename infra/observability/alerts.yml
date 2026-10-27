@@ -1,0 +1,82 @@
+# SLOs: availability 99.95% (30d error budget ≈ 21.6 min); p95 < 200 ms reads, < 500 ms writes.
+groups:
+  - name: slo
+    rules:
+      - record: job:http_error_ratio:rate5m
+        expr: sum(rate(http_request_duration_seconds_count{status_class="5xx"}[5m])) / sum(rate(http_request_duration_seconds_count[5m]))
+      - record: job:http_read_p95:5m
+        expr: histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{method="GET"}[5m])))
+      - record: job:http_write_p95:5m
+        expr: histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{method=~"POST|PATCH|DELETE"}[5m])))
+      # multi-window multi-burn-rate (Google SRE workbook): budget = 0.05%
+      - alert: AvailabilityFastBurn
+        expr: (sum(rate(http_request_duration_seconds_count{status_class="5xx"}[5m])) / sum(rate(http_request_duration_seconds_count[5m])) > (14.4 * 0.0005)) and (sum(rate(http_request_duration_seconds_count{status_class="5xx"}[1h])) / sum(rate(http_request_duration_seconds_count[1h])) > (14.4 * 0.0005))
+        for: 2m
+        labels: { severity: page }
+        annotations: { summary: "Burning the 99.95% error budget 14x too fast (budget gone in ~2 days)" }
+      - alert: AvailabilitySlowBurn
+        expr: (sum(rate(http_request_duration_seconds_count{status_class="5xx"}[30m])) / sum(rate(http_request_duration_seconds_count[30m])) > (6 * 0.0005)) and (sum(rate(http_request_duration_seconds_count{status_class="5xx"}[6h])) / sum(rate(http_request_duration_seconds_count[6h])) > (6 * 0.0005))
+        for: 15m
+        labels: { severity: ticket }
+        annotations: { summary: "Sustained error-budget burn (6x)" }
+      - alert: ReadLatencyP95High
+        expr: job:http_read_p95:5m > 0.2
+        for: 10m
+        labels: { severity: page }
+        annotations: { summary: "Read p95 above the 200 ms SLO" }
+      - alert: WriteLatencyP95High
+        expr: job:http_write_p95:5m > 0.5
+        for: 10m
+        labels: { severity: page }
+        annotations: { summary: "Write p95 above the 500 ms SLO" }
+  - name: saga-and-jobs
+    rules:
+      - alert: JobQueueBacklog
+        expr: jobs_oldest_pending_age_seconds > 120
+        for: 5m
+        labels: { severity: page }
+        annotations: { summary: "Oldest runnable job is over 2 minutes old: payments/notifications are delayed" }
+      - alert: DeadLetteredJobs
+        expr: jobs_queue_depth{status="dead"} > 0
+        for: 1m
+        labels: { severity: ticket }
+        annotations: { summary: "Jobs exhausted retries; inspect GET /v1/admin/jobs/dead" }
+      - alert: PaymentGatewayCircuitOpen
+        expr: circuit_breaker_state{name=~"gateway-.*"} == 2
+        for: 1m
+        labels: { severity: page }
+        annotations: { summary: "Payment gateway circuit is open; bookings will queue until it recovers" }
+      - alert: HighSagaCompensationRate
+        expr: sum(rate(saga_compensations_total{reason!~"cancel_.*"}[15m])) / clamp_min(sum(rate(bookings_total{outcome="created"}[15m])), 0.01) > 0.3
+        for: 15m
+        labels: { severity: ticket }
+        annotations: { summary: "Over 30% of bookings are being compensated (payment failures/timeouts)" }
+      - alert: SchedulerTaskFailing
+        expr: increase(scheduler_runs_total{outcome="error"}[15m]) > 2
+        labels: { severity: ticket }
+        annotations: { summary: "A recurring task is failing: {{ $labels.task }}" }
+  - name: platform-and-security
+    rules:
+      - alert: DbPoolSaturated
+        expr: db_pool_connections{state="waiting"} > 0
+        for: 5m
+        labels: { severity: page }
+        annotations: { summary: "Requests are waiting for DB connections" }
+      - alert: AuditWriteFailures
+        expr: increase(audit_events_total{outcome="failed"}[5m]) > 0
+        labels: { severity: page }
+        annotations: { summary: "Audit writes are failing; audited actions are failing closed" }
+      - alert: RefreshTokenReuseDetected
+        expr: increase(auth_events_total{event="refresh_reuse_detected"}[10m]) > 3
+        labels: { severity: ticket }
+        annotations: { summary: "Possible session theft: refresh-token reuse spike" }
+      - alert: LoginFailureSpike
+        expr: sum(rate(auth_events_total{event=~"login_failed|mfa_failed"}[5m])) > 5
+        for: 5m
+        labels: { severity: ticket }
+        annotations: { summary: "Credential-stuffing / brute-force pattern" }
+      - alert: RateLimitingHeavy
+        expr: sum(rate(rate_limited_total[5m])) > 20
+        for: 10m
+        labels: { severity: ticket }
+        annotations: { summary: "Sustained 429s: abuse or a mis-sized limit" }

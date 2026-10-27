@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: amrutam-config }
+data:
+  NODE_ENV: production
+  TRUST_PROXY: "true"
+  LOG_LEVEL: info
+  DATABASE_SSL: "true"
+  DB_POOL_MAX: "20"
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector.observability:4318
+  PAYMENT_PROVIDER: mock
+  ALLOW_MOCK_PAYMENTS: "false"   # set true ONLY in staging until a real PSP adapter is configured
+  CORS_ORIGINS: https://app.amrutam.example
+---
+# Secrets are NOT in git. External Secrets Operator syncs them from AWS Secrets Manager (KMS-encrypted, rotated).
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata: { name: amrutam-secrets }
+spec:
+  refreshInterval: 1h
+  secretStoreRef: { kind: ClusterSecretStore, name: aws-secrets-manager }
+  target: { name: amrutam-secrets }
+  dataFrom: [{ extract: { key: amrutam/prod/app } }]   # DATABASE_URL, DATABASE_READ_URL, REDIS_URL, JWT_*, DATA_KEYS_JSON, ...

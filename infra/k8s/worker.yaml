@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: amrutam-worker, labels: { app: amrutam-worker } }
+spec:
+  replicas: 3          # stateless; scale on queue depth (KEDA/prometheus-adapter on jobs_oldest_pending_age_seconds)
+  selector: { matchLabels: { app: amrutam-worker } }
+  template:
+    metadata:
+      labels: { app: amrutam-worker }
+      annotations: { prometheus.io/scrape: "true", prometheus.io/port: "9464" }
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: worker
+          image: amrutam-backend
+          args: ["node", "dist/worker.js"]
+          ports: [{ name: metrics, containerPort: 9464 }]
+          envFrom: [{ configMapRef: { name: amrutam-config } }, { secretRef: { name: amrutam-secrets } }]
+          env: [{ name: SERVICE_NAME, value: amrutam-worker }, { name: WORKER_CONCURRENCY, value: "20" }]
+          resources: { requests: { cpu: 250m, memory: 384Mi }, limits: { memory: 640Mi } }
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          livenessProbe: { httpGet: { path: /healthz, port: metrics }, periodSeconds: 15 }

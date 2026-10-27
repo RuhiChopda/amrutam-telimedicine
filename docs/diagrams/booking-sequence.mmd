@@ -1,0 +1,35 @@
+sequenceDiagram
+  autonumber
+  actor Pat as Patient
+  participant API
+  participant DB as PostgreSQL
+  participant W as Worker
+  participant PSP as Payment provider
+  Pat->>API: POST /v1/consultations {slotId} + Idempotency-Key
+  API->>API: authn (JWT) · RBAC · validate · rate limit
+  rect rgb(235,245,255)
+  note over API,DB: ONE transaction (idempotency + business effect + outbox + audit)
+  API->>DB: INSERT idempotency_keys (user,key) — duplicate waits/replays
+  API->>DB: UPDATE slot SET HELD WHERE status='OPEN' (atomic CAS)
+  alt slot taken (0 rows)
+    API-->>Pat: 409 SLOT_UNAVAILABLE (rolled back, key not stored)
+  else won the slot
+    API->>DB: INSERT consultation PENDING_PAYMENT, payment PENDING
+    API->>DB: INSERT job payment.create_intent (outbox) + audit_logs
+    API->>DB: store response in idempotency_keys · COMMIT
+  end
+  end
+  API-->>Pat: 201 {consultation, payment, holdExpiresAt}
+  W->>DB: claim job (FOR UPDATE SKIP LOCKED)
+  W->>PSP: createIntent(idempotencyKey = payment id) [timeout · backoff+jitter · circuit breaker]
+  W->>DB: payment REQUIRES_PAYMENT, encrypted client secret
+  Pat->>PSP: pays with client secret
+  PSP->>API: POST /v1/webhooks/payments (HMAC signed, event id)
+  rect rgb(235,255,240)
+  note over API,DB: ONE transaction, consultation row locked (serialises vs expiry)
+  API->>DB: dedupe event id → payment SUCCEEDED → consultation CONFIRMED → slot BOOKED
+  API->>DB: enqueue notify jobs + audit
+  end
+  API-->>PSP: 200
+  W->>Pat: booking confirmation (async)
+  note over W,DB: If no payment before hold expiry the scheduler cancels, reopens the slot and voids the intent. A success arriving after expiry is auto-refunded.

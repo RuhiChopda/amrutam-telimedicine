@@ -1,0 +1,83 @@
+erDiagram
+  users ||--|| profiles : has
+  users ||--o{ sessions : "refresh tokens"
+  users ||--o| doctors : "is"
+  doctors ||--o{ availability_slots : publishes
+  availability_slots ||--o| consultations : "booked as"
+  users ||--o{ consultations : "patient"
+  doctors ||--o{ consultations : "doctor"
+  consultations ||--o| payments : "paid by"
+  consultations ||--o{ prescriptions : "versions"
+  consultations ||--o| reviews : "rated"
+  users ||--o{ audit_logs : "actor"
+  users {
+    uuid id PK
+    bytea email_bidx UK "HMAC blind index"
+    text email_enc "AES-GCM"
+    text password_hash "scrypt"
+    text role "patient|doctor|admin|auditor"
+    text status
+    bool mfa_enabled
+    text mfa_secret_enc
+  }
+  profiles {
+    uuid user_id PK
+    text full_name_enc
+    text phone_enc
+    text date_of_birth_enc
+  }
+  doctors {
+    uuid id PK
+    uuid user_id UK
+    text[] specialties
+    text license_number UK
+    int consultation_fee_minor
+    text verification_status
+    tsvector search_tsv
+  }
+  availability_slots {
+    uuid id PK
+    uuid doctor_id FK
+    tstzrange start_end "EXCLUDE overlap"
+    text status "OPEN|HELD|BOOKED|CANCELLED"
+    timestamptz hold_expires_at
+  }
+  consultations {
+    uuid id PK "PK(id,scheduled_at)"
+    timestamptz scheduled_at "PARTITION KEY monthly"
+    uuid slot_id FK
+    uuid patient_id FK
+    uuid doctor_id FK
+    text status
+    text reason_enc "PHI"
+    text notes_enc "PHI"
+  }
+  payments {
+    uuid id PK
+    uuid consultation_id
+    int amount_minor
+    text status
+    text provider_ref
+    text client_secret_enc
+  }
+  prescriptions {
+    uuid id PK
+    uuid consultation_id
+    int version "UK(consultation,version)"
+    text content_enc "PHI"
+    bytea content_sha256
+    text signature "HMAC"
+  }
+  audit_logs {
+    bigint id PK
+    timestamptz created_at "PARTITION KEY monthly"
+    uuid actor_id
+    text action
+    jsonb metadata "no PHI"
+    bytea sig "HMAC row seal"
+  }
+  reviews {
+    uuid id PK
+    uuid consultation_id UK
+    smallint rating
+  }
