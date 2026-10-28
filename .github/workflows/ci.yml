@@ -47,7 +47,7 @@ jobs:
       - name: Dependency audit (fails on high/critical in production deps)
         run: npm run audit:deps
       - name: Secret scanning
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@v3
         env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
       - name: SAST (CodeQL)
         uses: github/codeql-action/init@v3
