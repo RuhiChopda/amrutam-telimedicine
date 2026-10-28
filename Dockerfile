@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1.7
-FROM node:22-alpine AS deps
+FROM node:26-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
-FROM node:22-alpine AS build
+FROM node:26-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.json tsconfig.build.json ./
 RUN npm ci --ignore-scripts
@@ -12,7 +12,7 @@ COPY src ./src
 RUN npm run build
 
 # Runtime: minimal, non-root, read-only-fs friendly, no shell tooling beyond busybox.
-FROM node:22-alpine AS runtime
+FROM node:26-alpine AS runtime
 ENV NODE_ENV=production NODE_OPTIONS="--enable-source-maps --max-old-space-size=384"
 WORKDIR /app
 RUN apk add --no-cache tini && addgroup -S app -g 10001 && adduser -S app -u 10001 -G app
