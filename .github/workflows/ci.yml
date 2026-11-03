@@ -50,9 +50,9 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
       - name: SAST (CodeQL)
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with: { languages: javascript-typescript }
-      - uses: github/codeql-action/analyze@v3
+      - uses: github/codeql-action/analyze@v4
       - name: IaC scan (Terraform + Kubernetes + Dockerfile)
         uses: aquasecurity/trivy-action@0.28.0
         with: { scan-type: config, scan-ref: ., severity: "HIGH,CRITICAL", exit-code: "1" }
