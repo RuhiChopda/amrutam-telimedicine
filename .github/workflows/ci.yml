@@ -68,7 +68,7 @@ jobs:
         if: github.ref == 'refs/heads/main'
         with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" }
       - name: Build (no push) for scanning
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with: { context: ., load: true, tags: "amrutam-backend:${{ github.sha }}", cache-from: type=gha, cache-to: "type=gha,mode=max" }
       - name: Image vulnerability scan
         uses: aquasecurity/trivy-action@0.28.0
@@ -78,7 +78,7 @@ jobs:
         with: { image: "amrutam-backend:${{ github.sha }}", format: cyclonedx-json, output-file: sbom.cdx.json }
       - name: Push (main only)
         if: github.ref == 'refs/heads/main'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with: { context: ., push: true, provenance: true, sbom: true, tags: "ghcr.io/${{ github.repository }}:${{ github.sha }}", cache-from: type=gha }
 
   deploy-staging:
